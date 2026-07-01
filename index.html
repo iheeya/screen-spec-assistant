@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>화면설계서 AI 어시스턴트</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="app-header">
+  <h1>화면설계서 AI 어시스턴트</h1>
+  <span class="subtitle">패턴 컨설턴트 · QA 리뷰어</span>
+
+  <div class="api-key-group">
+    <span class="status-dot" id="apiKeyStatusDot" title="API 키 상태"></span>
+    <input type="password" id="apiKeyInput" placeholder="Anthropic API 키 (sk-ant-...)" autocomplete="off" />
+    <select id="modelSelect" title="사용할 모델"></select>
+    <a class="help-link" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">키 발급받기 ↗</a>
+  </div>
+</header>
+
+<div class="app-body">
+
+  <!-- 좌측: 패턴 컨설턴트 채팅 -->
+  <section class="panel panel-chat">
+    <div class="panel-header">
+      패턴 컨설턴트
+      <span class="desc">UI 패턴 고민을 물어보세요</span>
+    </div>
+    <div class="chat-messages" id="chatMessages">
+      <div class="chat-empty">
+        예: "FAQ가 30개 정도 되는데 아코디언으로 하는 게 맞을까요?"<br />
+        "본인인증 단계 UI는 어떻게 설계하는 게 좋을까요?"
+      </div>
+    </div>
+    <form class="chat-input-row" id="chatForm">
+      <textarea id="chatInput" placeholder="화면설계 중 고민을 입력하세요... (Enter 전송, Shift+Enter 줄바꿈)" rows="1"></textarea>
+      <button type="submit" class="btn btn-primary">전송</button>
+    </form>
+  </section>
+
+  <!-- 우측: 탭 (QA 리뷰어 / 룰셋 뷰어 / 설정) -->
+  <section class="panel panel-main">
+    <div class="tabbar">
+      <button class="tab-btn active" data-tab="qa">QA 리뷰어</button>
+      <button class="tab-btn" data-tab="ruleset">룰셋 뷰어</button>
+      <button class="tab-btn" data-tab="settings">설정</button>
+    </div>
+
+    <div class="tab-panels">
+
+      <!-- QA 리뷰어 -->
+      <div class="tab-panel active" id="tab-qa">
+        <div class="upload-box">
+          <label for="pptxInput">1. 화면설계서 PPTX 업로드 (필수)</label>
+          <input type="file" id="pptxInput" accept=".pptx" />
+          <div class="hint" id="pptxFileName"></div>
+        </div>
+
+        <div class="upload-box">
+          <label for="imageInput">2. 슬라이드 PNG 이미지 업로드 (선택 — Vision 분석용)</label>
+          <input type="file" id="imageInput" accept="image/png,image/jpeg" multiple />
+          <div class="hint">파워포인트에서 슬라이드를 PNG로 내보내 업로드하면 여백/정렬감/시각적 위계를 추가로 분석합니다. 각 이미지가 몇 번 슬라이드인지 지정해주세요.</div>
+          <div class="file-chip-list" id="imageFileList"></div>
+        </div>
+
+        <button class="btn btn-primary" id="runQaBtn" disabled>QA 리뷰 실행</button>
+        <div class="progress-line" id="qaProgress"></div>
+
+        <div id="qaReport" style="margin-top: 18px;"></div>
+      </div>
+
+      <!-- 룰셋 뷰어 -->
+      <div class="tab-panel" id="tab-ruleset">
+        <div class="ruleset-toolbar">
+          <input type="text" id="ruleSearchInput" placeholder="카테고리/조건/추천 검색..." />
+          <button class="btn btn-sm" id="addRuleBtn">+ 새 규칙</button>
+          <button class="btn btn-sm" id="exportRulesetBtn">JSON 내보내기</button>
+          <label class="btn btn-sm" style="margin:0;">
+            JSON 가져오기
+            <input type="file" id="importRulesetInput" accept="application/json" style="display:none;" />
+          </label>
+        </div>
+        <div id="rulesetContainer"></div>
+      </div>
+
+      <!-- 설정 -->
+      <div class="tab-panel" id="tab-settings">
+        <div class="settings-section">
+          <h3>API 키</h3>
+          <div class="settings-row">
+            <div class="row-desc">
+              API 키는 상단 입력창에서 설정하며, 이 브라우저의 localStorage에만 저장됩니다. 서버로 전송되지 않고
+              Anthropic API에 브라우저에서 직접 요청합니다 (개인용 도구이므로 이 정도 보안 수준으로 충분합니다).
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>룰셋 데이터 관리</h3>
+          <div class="settings-row">
+            <div class="row-desc">현재 룰셋을 JSON으로 백업합니다.</div>
+            <button class="btn btn-sm" id="settingsExportBtn">내보내기</button>
+          </div>
+          <div class="settings-row">
+            <div class="row-desc">사용자가 추가/수정한 내용을 모두 지우고 초기 시드 데이터로 되돌립니다.</div>
+            <button class="btn btn-sm btn-danger" id="resetRulesetBtn">시드로 초기화</button>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>전체 데이터 삭제</h3>
+          <div class="settings-row">
+            <div class="row-desc">API 키, 룰셋 등 이 앱이 저장한 모든 로컬 데이터를 삭제합니다.</div>
+            <button class="btn btn-sm btn-danger" id="clearAllDataBtn">전체 삭제</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="ruleset-seed.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
