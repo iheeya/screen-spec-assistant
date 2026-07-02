@@ -571,13 +571,13 @@ input, select, textarea, button {
   border-radius: 6px;
 }
 
-/* ---------- Reference design cards ---------- */
+/* ---------- Component standard cards (내부 디자인 시스템, QA 비교용) ---------- */
 
-.rule-card-ref {
+.rule-card-cs {
   border-left: 3px solid #7c3aed;
 }
 
-.tag-ref {
+.tag-cs {
   display: inline-block;
   font-size: 11px;
   font-weight: 700;
@@ -585,6 +585,22 @@ input, select, textarea, button {
   border-radius: 10px;
   background: #ede9fe;
   color: #5b21b6;
+}
+
+/* ---------- Competitor reference cards (외부 벤치마킹, 컨설턴트 참고용) ---------- */
+
+.rule-card-competitor {
+  border-left: 3px solid #0d9488;
+}
+
+.tag-competitor {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 10px;
+  background: #ccfbf1;
+  color: #0f766e;
 }
 
 /* ---------- Modal ---------- */

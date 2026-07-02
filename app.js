@@ -33,7 +33,7 @@ let qaSource = "pptx"; // "pptx" | "figma"
 
 let pendingFocusRuleId = null; // 새로 추가된 텍스트 규칙 카드로 스크롤/자동 편집하기 위한 표식
 
-let refModalState = {
+let csModalState = {
   source: "pptx",
   parsedPptx: null,
   selectedSlideIndex: null,
@@ -474,6 +474,7 @@ function loadRuleset() {
   if (raw) {
     try {
       ruleset = JSON.parse(raw);
+      migrateLegacyReferenceDesigns();
       return;
     } catch (e) {
       console.warn("룰셋 파싱 실패, 시드로 재초기화합니다.", e);
@@ -481,6 +482,18 @@ function loadRuleset() {
   }
   ruleset = JSON.parse(JSON.stringify(SEED_RULESET));
   saveRuleset();
+}
+
+/** 이전 버전의 단일 reference_design 타입을 component_standard로 이관한다. */
+function migrateLegacyReferenceDesigns() {
+  let migrated = false;
+  ruleset.forEach((r) => {
+    if (r.type === "reference_design") {
+      r.type = "component_standard";
+      migrated = true;
+    }
+  });
+  if (migrated) saveRuleset();
 }
 
 function saveRuleset() {
@@ -520,8 +533,15 @@ const PROPOSE_RULE_TOOL = {
 
 function buildCompactRuleset() {
   return ruleset
-    .filter((r) => r.type !== "reference_design")
+    .filter((r) => r.type === "rule" || !r.type)
     .map((r) => `[${r.id}] (${r.category}) 조건: ${r.condition} → 추천: ${r.recommendation}`)
+    .join("\n");
+}
+
+function buildCompactCompetitorRefs() {
+  return ruleset
+    .filter((r) => r.type === "competitor_reference")
+    .map((r) => `[${r.id}] (${r.category}) ${r.service_name}: ${r.notes || "(메모 없음)"}${r.url ? ` — ${r.url}` : ""}`)
     .join("\n");
 }
 
@@ -529,17 +549,23 @@ function buildConsultantSystem() {
   return `너는 서비스기획(UX/PM) 실무자를 돕는 "화면설계서 패턴 컨설턴트"다.
 사용자는 화면설계서(와이어프레임 스펙 문서)를 작성하며 마주치는 UI 패턴 고민(내비게이션, 리스트/콘텐츠 표시, 페이지네이션, 검색, 필터, FAQ, 폼/입력, 모달/오버레이, 상태 디자인, 버튼/CTA, 알림, 온보딩, 인증/가입, 프로세스형 화면, 예외처리 등)을 질문한다.
 
-다음은 현재 보유한 룰셋 목록이다 (id, 카테고리, 조건, 추천 요약):
+다음은 현재 보유한 텍스트 룰셋 목록이다 (id, 카테고리, 조건, 추천 요약):
 ---
 ${buildCompactRuleset() || "(아직 저장된 룰셋이 없음)"}
 ---
 
+다음은 사용자가 직접 등록한 경쟁사/외부 레퍼런스 목록이다 (id, 카테고리, 서비스명: 메모):
+---
+${buildCompactCompetitorRefs() || "(아직 등록된 경쟁사 레퍼런스 없음)"}
+---
+
 지침:
-1. 먼저 위 룰셋에서 질문과 관련된 항목이 있는지 확인하고, 있다면 해당 id를 근거로 답하라.
-2. 룰셋에 적절한 근거가 없거나 명백히 불충분하면 web_search 도구로 신뢰도 높은 출처(Nielsen Norman Group, Baymard Institute, Material Design, Apple Human Interface Guidelines, Jakob's Law 관련 자료 등)를 우선 조사한 뒤 답하라.
-3. 답변은 (1) 결론(추천 패턴)을 1~2문장으로 먼저 제시, (2) 근거, (3) 이 패턴을 피해야 할 예외 상황, (4) 필요하면 구현 팁 순으로 간결하게 작성하라.
-4. 웹 조사를 통해 룰셋에 없는 새로운 유의미한 지식을 얻었다면 propose_ruleset_entry 도구를 호출해 제안하라. 기존 룰셋 항목을 재확인/재사용한 경우에는 호출하지 마라.
-5. 한국어로, 실무자가 바로 화면설계서에 반영할 수 있도록 구체적으로 답하라.`;
+1. 먼저 위 텍스트 룰셋에서 질문과 관련된 항목이 있는지 확인하고, 있다면 해당 id를 근거로 답하라.
+2. 질문과 관련된 경쟁사/외부 레퍼런스가 있다면 "OO 서비스는 이런 방식을 씁니다" 같은 형태로 답변에 자연스럽게 인용하라. 다만 이는 참고 사례일 뿐 우리 서비스가 그대로 따라야 하는 기준은 아니라는 점을 전제로 다뤄라.
+3. 룰셋/레퍼런스에 적절한 근거가 없거나 명백히 불충분하면 web_search 도구로 신뢰도 높은 출처(Nielsen Norman Group, Baymard Institute, Material Design, Apple Human Interface Guidelines, Jakob's Law 관련 자료 등)를 우선 조사한 뒤 답하라.
+4. 답변은 (1) 결론(추천 패턴)을 1~2문장으로 먼저 제시, (2) 근거, (3) 이 패턴을 피해야 할 예외 상황, (4) 필요하면 구현 팁 순으로 간결하게 작성하라.
+5. 웹 조사를 통해 룰셋에 없는 새로운 유의미한 지식을 얻었다면 propose_ruleset_entry 도구를 호출해 제안하라. 기존 룰셋 항목을 재확인/재사용한 경우에는 호출하지 마라.
+6. 한국어로, 실무자가 바로 화면설계서에 반영할 수 있도록 구체적으로 답하라.`;
 }
 
 function appendChatNode(node) {
@@ -1035,7 +1061,7 @@ async function runVisionCheck(file, slideIndex, slideTextSummary) {
   }));
 }
 
-// ===================== 룰셋 레퍼런스 디자인과 일관성 비교 =====================
+// ===================== 룰셋 컴포넌트 표준과 일관성 비교 =====================
 
 const COMPARISON_SCHEMA = {
   type: "object",
@@ -1189,12 +1215,12 @@ async function runQaReview() {
     const compareCategory = $("#qaCategorySelect").value;
     if (compareCategory) {
       const refs = ruleset
-        .filter((r) => r.type === "reference_design" && r.category === compareCategory)
+        .filter((r) => r.type === "component_standard" && r.category === compareCategory)
         .slice(-3);
       if (refs.length) {
         for (const slide of slides) {
           for (const ref of refs) {
-            updateQaProgress(`레퍼런스 디자인과 비교 중 (${unitLabel} ${slide.index})...`);
+            updateQaProgress(`컴포넌트 표준과 비교 중 (${unitLabel} ${slide.index})...`);
             try {
               const diffFindings = await runReferenceComparison(slide, ref);
               diffFindings.forEach((f) => {
@@ -1428,10 +1454,14 @@ function renderRulesetView() {
 
   const filtered = ruleset.filter((r) => {
     if (!query) return true;
-    const haystack =
-      r.type === "reference_design"
-        ? [r.category, r.notes, r.source_ref, (r.tags || []).join(" ")].join(" ")
-        : [r.category, r.condition, r.recommendation, r.source].join(" ");
+    let haystack;
+    if (r.type === "component_standard") {
+      haystack = [r.category, r.notes, r.source_ref, (r.tags || []).join(" ")].join(" ");
+    } else if (r.type === "competitor_reference") {
+      haystack = [r.category, r.service_name, r.notes, r.url, (r.tags || []).join(" ")].join(" ");
+    } else {
+      haystack = [r.category, r.condition, r.recommendation, r.source].join(" ");
+    }
     return haystack.toLowerCase().includes(query);
   });
 
@@ -1459,7 +1489,8 @@ function renderRulesetView() {
 }
 
 function renderRuleCard(rule) {
-  if (rule.type === "reference_design") return renderReferenceCard(rule);
+  if (rule.type === "component_standard") return renderComponentStandardCard(rule);
+  if (rule.type === "competitor_reference") return renderCompetitorReferenceCard(rule);
 
   const startExpanded = rule.id === pendingFocusRuleId;
   const card = el("div", { class: "rule-card", attrs: { "data-id": rule.id } });
@@ -1548,18 +1579,18 @@ function renderRuleCard(rule) {
   return card;
 }
 
-function renderReferenceCard(rule) {
-  const card = el("div", { class: "rule-card rule-card-ref", attrs: { "data-id": rule.id } });
+function renderComponentStandardCard(rule) {
+  const card = el("div", { class: "rule-card rule-card-cs", attrs: { "data-id": rule.id } });
 
   const top = el("div", { class: "rule-top" });
   const info = el("div", {}, [
-    el("div", { class: "rule-recommend" }, [el("span", { class: "tag-ref", text: "🖼️ 레퍼런스 디자인" })]),
+    el("div", { class: "rule-recommend" }, [el("span", { class: "tag-cs", text: "🧩 컴포넌트 표준" })]),
     el("div", { class: "rule-condition", text: rule.notes || "(메모 없음)" }),
   ]);
   const actions = el("div", { class: "rule-actions" });
   const deleteBtn = el("button", { class: "btn btn-sm btn-danger", text: "삭제" });
   deleteBtn.addEventListener("click", () => {
-    if (!confirm("이 레퍼런스 디자인을 삭제할까요?")) return;
+    if (!confirm("이 컴포넌트 표준을 삭제할까요?")) return;
     ruleset = ruleset.filter((r) => r.id !== rule.id);
     saveRuleset();
     renderRulesetView();
@@ -1578,6 +1609,58 @@ function renderReferenceCard(rule) {
       createdLabel ? el("span", { text: `등록: ${createdLabel}` }) : null,
     ])
   );
+
+  if (rule.tags && rule.tags.length) {
+    const tagsRow = el("div", { attrs: { style: "margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;" } });
+    rule.tags.forEach((t) => tagsRow.appendChild(el("span", { class: "file-chip", text: t })));
+    card.appendChild(tagsRow);
+  }
+
+  return card;
+}
+
+function renderCompetitorReferenceCard(rule) {
+  const card = el("div", { class: "rule-card rule-card-competitor", attrs: { "data-id": rule.id } });
+
+  const top = el("div", { class: "rule-top" });
+  const info = el("div", {}, [
+    el("div", { class: "rule-recommend" }, [el("span", { class: "tag-competitor", text: "🌐 경쟁사 레퍼런스" })]),
+    el("div", { class: "rule-condition", text: rule.service_name || "(서비스명 없음)" }),
+  ]);
+  const actions = el("div", { class: "rule-actions" });
+  const deleteBtn = el("button", { class: "btn btn-sm btn-danger", text: "삭제" });
+  deleteBtn.addEventListener("click", () => {
+    if (!confirm("이 경쟁사 레퍼런스를 삭제할까요?")) return;
+    ruleset = ruleset.filter((r) => r.id !== rule.id);
+    saveRuleset();
+    renderRulesetView();
+  });
+  actions.appendChild(deleteBtn);
+  top.appendChild(info);
+  top.appendChild(actions);
+  card.appendChild(top);
+
+  const createdLabel = rule.created_at ? new Date(rule.created_at).toLocaleDateString("ko-KR") : "";
+  const metaChildren = [];
+  if (rule.url) {
+    metaChildren.push(
+      el("a", { text: rule.url, attrs: { href: rule.url, target: "_blank", rel: "noopener", style: "color:var(--color-primary);" } })
+    );
+  }
+  if (createdLabel) metaChildren.push(el("span", { text: `등록: ${createdLabel}` }));
+  if (metaChildren.length) card.appendChild(el("div", { class: "rule-meta" }, metaChildren));
+
+  if (rule.notes) {
+    card.appendChild(el("div", { class: "rule-meta", text: rule.notes }));
+  }
+
+  if (rule.image) {
+    const img = document.createElement("img");
+    img.src = rule.image;
+    img.alt = rule.service_name || "레퍼런스 스크린샷";
+    img.style.cssText = "max-width:100%;border-radius:6px;margin-top:8px;border:1px solid var(--color-border);display:block;";
+    card.appendChild(img);
+  }
 
   if (rule.tags && rule.tags.length) {
     const tagsRow = el("div", { attrs: { style: "margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;" } });
@@ -1643,7 +1726,7 @@ function saveTextRule() {
   showToast("텍스트 규칙이 룰셋에 저장되었습니다.");
 }
 
-// ===================== 룰셋: 레퍼런스 디자인 추가 모달 =====================
+// ===================== 룰셋: 컴포넌트 표준 추가 모달 (내부 디자인 시스템, QA 비교용) =====================
 
 function shapesToElements(shapes) {
   return shapes
@@ -1662,73 +1745,73 @@ function shapesToElements(shapes) {
     });
 }
 
-function initReferenceModal() {
-  $("#addReferenceBtn").addEventListener("click", openReferenceModal);
-  $("#refModalCancelBtn").addEventListener("click", closeReferenceModal);
-  $("#referenceModalOverlay").addEventListener("click", (ev) => {
-    if (ev.target.id === "referenceModalOverlay") closeReferenceModal();
+function initComponentStandardModal() {
+  $("#addComponentStandardBtn").addEventListener("click", openComponentStandardModal);
+  $("#csModalCancelBtn").addEventListener("click", closeComponentStandardModal);
+  $("#componentModalOverlay").addEventListener("click", (ev) => {
+    if (ev.target.id === "componentModalOverlay") closeComponentStandardModal();
   });
 
   $all(".ref-source-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       $all(".ref-source-btn").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
-      refModalState.source = btn.dataset.source;
-      $("#refPptxSection").style.display = refModalState.source === "pptx" ? "block" : "none";
-      $("#refFigmaSection").style.display = refModalState.source === "figma" ? "block" : "none";
-      updateRefSaveEnabled();
+      csModalState.source = btn.dataset.source;
+      $("#csPptxSection").style.display = csModalState.source === "pptx" ? "block" : "none";
+      $("#csFigmaSection").style.display = csModalState.source === "figma" ? "block" : "none";
+      updateComponentStandardSaveEnabled();
     });
   });
 
-  $("#refPptxInput").addEventListener("change", async () => {
-    const file = $("#refPptxInput").files[0];
+  $("#csPptxInput").addEventListener("change", async () => {
+    const file = $("#csPptxInput").files[0];
     if (!file) return;
     try {
-      refModalState.parsedPptx = await parsePptx(file);
-      refModalState.parsedPptx.fileName = file.name;
-      const select = $("#refSlideSelect");
+      csModalState.parsedPptx = await parsePptx(file);
+      csModalState.parsedPptx.fileName = file.name;
+      const select = $("#csSlideSelect");
       select.innerHTML = "";
-      refModalState.parsedPptx.slides.forEach((s) => {
+      csModalState.parsedPptx.slides.forEach((s) => {
         const preview = truncate(s.shapes.map((sh) => sh.text).filter(Boolean).join(" "), 30) || "(텍스트 없음)";
         select.appendChild(
           el("option", { text: `슬라이드 ${s.index}: ${preview}`, attrs: { value: String(s.index) } })
         );
       });
       select.style.display = "block";
-      refModalState.selectedSlideIndex = refModalState.parsedPptx.slides[0]?.index ?? null;
-      updateRefSaveEnabled();
+      csModalState.selectedSlideIndex = csModalState.parsedPptx.slides[0]?.index ?? null;
+      updateComponentStandardSaveEnabled();
     } catch (e) {
       showToast(`PPTX 분석 실패: ${e.message}`, true);
     }
   });
-  $("#refSlideSelect").addEventListener("change", (ev) => {
-    refModalState.selectedSlideIndex = parseInt(ev.target.value, 10);
+  $("#csSlideSelect").addEventListener("change", (ev) => {
+    csModalState.selectedSlideIndex = parseInt(ev.target.value, 10);
   });
 
-  $("#refFigmaLoadBtn").addEventListener("click", async () => {
-    const raw = $("#refFigmaUrlInput").value.trim();
+  $("#csFigmaLoadBtn").addEventListener("click", async () => {
+    const raw = $("#csFigmaUrlInput").value.trim();
     if (!raw) {
       showToast("피그마 URL 또는 key를 입력해주세요.", true);
       return;
     }
-    const btn = $("#refFigmaLoadBtn");
+    const btn = $("#csFigmaLoadBtn");
     btn.disabled = true;
     btn.textContent = "불러오는 중...";
     try {
       const { fileKey } = parseFigmaKeyAndNode(raw);
       if (!fileKey) throw new Error("올바른 URL/key가 아닙니다.");
       const fileData = await fetchFigmaFile(fileKey);
-      refModalState.figmaComponentsMap = fileData.components || {};
-      refModalState.figmaFrames = collectFigmaFrames(fileData.document, { maxFrames: 40 });
-      if (!refModalState.figmaFrames.length) throw new Error("프레임을 찾지 못했습니다.");
-      const select = $("#refFrameSelect");
+      csModalState.figmaComponentsMap = fileData.components || {};
+      csModalState.figmaFrames = collectFigmaFrames(fileData.document, { maxFrames: 40 });
+      if (!csModalState.figmaFrames.length) throw new Error("프레임을 찾지 못했습니다.");
+      const select = $("#csFrameSelect");
       select.innerHTML = "";
-      refModalState.figmaFrames.forEach((f, i) => {
+      csModalState.figmaFrames.forEach((f, i) => {
         select.appendChild(el("option", { text: f.name, attrs: { value: String(i) } }));
       });
       select.style.display = "block";
-      refModalState.selectedFrameIndex = 0;
-      updateRefSaveEnabled();
+      csModalState.selectedFrameIndex = 0;
+      updateComponentStandardSaveEnabled();
     } catch (e) {
       showToast(`피그마 불러오기 실패: ${e.message}`, true);
     } finally {
@@ -1736,23 +1819,23 @@ function initReferenceModal() {
       btn.textContent = "프레임 목록 불러오기";
     }
   });
-  $("#refFrameSelect").addEventListener("change", (ev) => {
-    refModalState.selectedFrameIndex = parseInt(ev.target.value, 10);
+  $("#csFrameSelect").addEventListener("change", (ev) => {
+    csModalState.selectedFrameIndex = parseInt(ev.target.value, 10);
   });
 
-  $("#refModalSaveBtn").addEventListener("click", saveReferenceDesign);
+  $("#csModalSaveBtn").addEventListener("click", saveComponentStandard);
 }
 
-function updateRefSaveEnabled() {
+function updateComponentStandardSaveEnabled() {
   const ok =
-    refModalState.source === "pptx"
-      ? !!(refModalState.parsedPptx && refModalState.selectedSlideIndex != null)
-      : !!(refModalState.figmaFrames.length && refModalState.selectedFrameIndex != null);
-  $("#refModalSaveBtn").disabled = !ok;
+    csModalState.source === "pptx"
+      ? !!(csModalState.parsedPptx && csModalState.selectedSlideIndex != null)
+      : !!(csModalState.figmaFrames.length && csModalState.selectedFrameIndex != null);
+  $("#csModalSaveBtn").disabled = !ok;
 }
 
-function openReferenceModal() {
-  refModalState = {
+function openComponentStandardModal() {
+  csModalState = {
     source: "pptx",
     parsedPptx: null,
     selectedSlideIndex: null,
@@ -1760,62 +1843,62 @@ function openReferenceModal() {
     selectedFrameIndex: null,
     figmaComponentsMap: {},
   };
-  $("#refPptxInput").value = "";
-  $("#refSlideSelect").innerHTML = "";
-  $("#refSlideSelect").style.display = "none";
-  $("#refFigmaUrlInput").value = "";
-  $("#refFrameSelect").innerHTML = "";
-  $("#refFrameSelect").style.display = "none";
-  $("#refCategoryInput").value = "";
-  $("#refTagsInput").value = "";
-  $("#refNotesInput").value = "";
+  $("#csPptxInput").value = "";
+  $("#csSlideSelect").innerHTML = "";
+  $("#csSlideSelect").style.display = "none";
+  $("#csFigmaUrlInput").value = "";
+  $("#csFrameSelect").innerHTML = "";
+  $("#csFrameSelect").style.display = "none";
+  $("#csCategoryInput").value = "";
+  $("#csTagsInput").value = "";
+  $("#csNotesInput").value = "";
   $all(".ref-source-btn").forEach((b) => b.classList.toggle("active", b.dataset.source === "pptx"));
-  $("#refPptxSection").style.display = "block";
-  $("#refFigmaSection").style.display = "none";
+  $("#csPptxSection").style.display = "block";
+  $("#csFigmaSection").style.display = "none";
   populateCategoryDatalist();
-  updateRefSaveEnabled();
-  $("#referenceModalOverlay").style.display = "flex";
+  updateComponentStandardSaveEnabled();
+  $("#componentModalOverlay").style.display = "flex";
 }
 
-function closeReferenceModal() {
-  $("#referenceModalOverlay").style.display = "none";
+function closeComponentStandardModal() {
+  $("#componentModalOverlay").style.display = "none";
 }
 
-function saveReferenceDesign() {
-  const category = $("#refCategoryInput").value.trim() || "미분류";
-  const tags = $("#refTagsInput").value
+function saveComponentStandard() {
+  const category = $("#csCategoryInput").value.trim() || "미분류";
+  const tags = $("#csTagsInput").value
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);
-  const notes = $("#refNotesInput").value.trim();
+  const notes = $("#csNotesInput").value.trim();
 
   let sourceType, sourceRef, elements;
 
-  if (refModalState.source === "pptx") {
-    const slide = refModalState.parsedPptx.slides.find((s) => s.index === refModalState.selectedSlideIndex);
+  if (csModalState.source === "pptx") {
+    const slide = csModalState.parsedPptx.slides.find((s) => s.index === csModalState.selectedSlideIndex);
     if (!slide) {
       showToast("슬라이드를 선택해주세요.", true);
       return;
     }
     sourceType = "pptx";
-    sourceRef = `${refModalState.parsedPptx.fileName} - 슬라이드 ${slide.index}`;
+    sourceRef = `${csModalState.parsedPptx.fileName} - 슬라이드 ${slide.index}`;
     elements = shapesToElements(slide.shapes);
   } else {
-    const frame = refModalState.figmaFrames[refModalState.selectedFrameIndex];
+    const frame = csModalState.figmaFrames[csModalState.selectedFrameIndex];
     if (!frame) {
       showToast("프레임을 선택해주세요.", true);
       return;
     }
-    const slide = figmaFrameToSlide(frame, 1, refModalState.figmaComponentsMap);
+    const slide = figmaFrameToSlide(frame, 1, csModalState.figmaComponentsMap);
     sourceType = "figma";
-    sourceRef = `${$("#refFigmaUrlInput").value.trim()} - 프레임 "${frame.name}"`;
+    sourceRef = `${$("#csFigmaUrlInput").value.trim()} - 프레임 "${frame.name}"`;
     elements = shapesToElements(slide.shapes);
   }
 
   const rule = {
-    id: uid("ref-" + slugify(category)),
+    id: uid("cs-" + slugify(category)),
     category,
-    type: "reference_design",
+    type: "component_standard",
     source_type: sourceType,
     source_ref: sourceRef,
     extracted_layout: { elements },
@@ -1827,8 +1910,79 @@ function saveReferenceDesign() {
   ruleset.push(rule);
   saveRuleset();
   renderRulesetView();
-  closeReferenceModal();
-  showToast("레퍼런스 디자인이 룰셋에 저장되었습니다.");
+  closeComponentStandardModal();
+  showToast("컴포넌트 표준이 룰셋에 저장되었습니다.");
+}
+
+// ===================== 룰셋: 경쟁사 레퍼런스 추가 모달 (외부 벤치마킹, 컨설턴트 참고용) =====================
+
+function initCompetitorModal() {
+  $("#addCompetitorRefBtn").addEventListener("click", openCompetitorModal);
+  $("#compModalCancelBtn").addEventListener("click", closeCompetitorModal);
+  $("#competitorModalOverlay").addEventListener("click", (ev) => {
+    if (ev.target.id === "competitorModalOverlay") closeCompetitorModal();
+  });
+  ["compCategoryInput", "compServiceNameInput"].forEach((id) => {
+    $(`#${id}`).addEventListener("input", updateCompetitorSaveEnabled);
+  });
+  $("#compModalSaveBtn").addEventListener("click", saveCompetitorRef);
+}
+
+function updateCompetitorSaveEnabled() {
+  const ok = $("#compCategoryInput").value.trim() && $("#compServiceNameInput").value.trim();
+  $("#compModalSaveBtn").disabled = !ok;
+}
+
+function openCompetitorModal() {
+  ["compCategoryInput", "compServiceNameInput", "compUrlInput", "compNotesInput", "compTagsInput"].forEach(
+    (id) => ($(`#${id}`).value = "")
+  );
+  $("#compImageInput").value = "";
+  populateCategoryDatalist();
+  updateCompetitorSaveEnabled();
+  $("#competitorModalOverlay").style.display = "flex";
+}
+
+function closeCompetitorModal() {
+  $("#competitorModalOverlay").style.display = "none";
+}
+
+async function saveCompetitorRef() {
+  const category = $("#compCategoryInput").value.trim();
+  const serviceName = $("#compServiceNameInput").value.trim();
+  if (!category || !serviceName) return;
+
+  const imageFile = $("#compImageInput").files[0];
+  let image = null;
+  if (imageFile) {
+    try {
+      const base64 = await fileToBase64(imageFile);
+      image = `data:${imageFile.type || "image/png"};base64,${base64}`;
+    } catch (e) {
+      showToast(`이미지 저장 실패: ${e.message}`, true);
+    }
+  }
+
+  const rule = {
+    id: uid("comp-" + slugify(category)),
+    category,
+    type: "competitor_reference",
+    service_name: serviceName,
+    url: $("#compUrlInput").value.trim(),
+    image,
+    notes: $("#compNotesInput").value.trim(),
+    tags: $("#compTagsInput").value
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean),
+    created_by: "user-upload",
+    created_at: new Date().toISOString(),
+  };
+  ruleset.push(rule);
+  saveRuleset();
+  renderRulesetView();
+  closeCompetitorModal();
+  showToast("경쟁사 레퍼런스가 룰셋에 저장되었습니다.");
 }
 
 // ===================== 설정 탭 =====================
@@ -1895,7 +2049,8 @@ function init() {
   initQaSourceToggle();
   initRulesetToolbar();
   initTextRuleModal();
-  initReferenceModal();
+  initComponentStandardModal();
+  initCompetitorModal();
   initSettingsTab();
   initFigmaSettings();
   renderRulesetView();

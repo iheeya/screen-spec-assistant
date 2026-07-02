@@ -83,7 +83,7 @@
         </div>
 
         <div class="upload-box">
-          <label for="qaCategorySelect">참고 카테고리 (선택 — 룰셋에 저장된 레퍼런스 디자인과 자동 비교)</label>
+          <label for="qaCategorySelect">참고 카테고리 (선택 — 룰셋에 저장된 컴포넌트 표준과 자동 비교)</label>
           <select id="qaCategorySelect"><option value="">비교 안 함</option></select>
         </div>
 
@@ -98,7 +98,8 @@
         <div class="ruleset-toolbar">
           <input type="text" id="ruleSearchInput" placeholder="카테고리/조건/추천/태그 검색..." />
           <button class="btn btn-sm" id="addTextRuleBtn">+ 텍스트 규칙</button>
-          <button class="btn btn-sm" id="addReferenceBtn">+ 레퍼런스 디자인</button>
+          <button class="btn btn-sm" id="addComponentStandardBtn">+ 컴포넌트 표준</button>
+          <button class="btn btn-sm" id="addCompetitorRefBtn">+ 경쟁사 레퍼런스</button>
           <button class="btn btn-sm" id="exportRulesetBtn">JSON 내보내기</button>
           <label class="btn btn-sm" style="margin:0;">
             JSON 가져오기
@@ -125,7 +126,7 @@
           <div class="settings-row">
             <div class="row-desc">
               Figma 계정 설정(Settings) &gt; Security 탭에서 Personal Access Token을 발급받아 입력하세요.
-              이 토큰은 브라우저 localStorage에만 저장되며, 룰셋의 "레퍼런스 디자인 추가"와 QA 리뷰어의 "피그마 URL로 검토"에서 사용됩니다.
+              이 토큰은 브라우저 localStorage에만 저장되며, 룰셋의 "컴포넌트 표준 추가"와 QA 리뷰어의 "피그마 URL로 검토"에서 사용됩니다.
             </div>
           </div>
           <div class="settings-row">
@@ -162,9 +163,10 @@
 
 <div class="toast-container" id="toastContainer"></div>
 
-<div class="modal-overlay" id="referenceModalOverlay" style="display:none;">
+<div class="modal-overlay" id="componentModalOverlay" style="display:none;">
   <div class="modal-box">
-    <h3>레퍼런스 디자인 추가</h3>
+    <h3>컴포넌트 표준 추가</h3>
+    <div class="hint" style="margin-bottom:12px;">프로젝트에서 이미 확정한 공통 컴포넌트(버튼, 카드, 모달 등)의 실제 화면을 등록합니다. QA 리뷰 시 같은 카테고리의 새 화면과 스타일을 자동 비교합니다.</div>
     <div class="modal-field">
       <label>소스 타입</label>
       <div class="ref-source-toggle">
@@ -173,36 +175,72 @@
       </div>
     </div>
 
-    <div class="modal-field" id="refPptxSection">
-      <label for="refPptxInput">PPTX 파일 업로드 후 기준으로 삼을 슬라이드 선택</label>
-      <input type="file" id="refPptxInput" accept=".pptx" />
-      <select id="refSlideSelect" style="margin-top:8px;display:none;"></select>
+    <div class="modal-field" id="csPptxSection">
+      <label for="csPptxInput">PPTX 파일 업로드 후 기준으로 삼을 슬라이드 선택</label>
+      <input type="file" id="csPptxInput" accept=".pptx" />
+      <select id="csSlideSelect" style="margin-top:8px;display:none;"></select>
     </div>
 
-    <div class="modal-field" id="refFigmaSection" style="display:none;">
-      <label for="refFigmaUrlInput">피그마 파일 URL 또는 key</label>
-      <input type="text" id="refFigmaUrlInput" placeholder="https://www.figma.com/design/XXXX/..." />
-      <button type="button" class="btn btn-sm" id="refFigmaLoadBtn" style="margin-top:6px;">프레임 목록 불러오기</button>
-      <select id="refFrameSelect" style="margin-top:8px;display:none;"></select>
+    <div class="modal-field" id="csFigmaSection" style="display:none;">
+      <label for="csFigmaUrlInput">피그마 파일 URL 또는 key</label>
+      <input type="text" id="csFigmaUrlInput" placeholder="https://www.figma.com/design/XXXX/..." />
+      <button type="button" class="btn btn-sm" id="csFigmaLoadBtn" style="margin-top:6px;">프레임 목록 불러오기</button>
+      <select id="csFrameSelect" style="margin-top:8px;display:none;"></select>
     </div>
 
     <div class="modal-field">
-      <label for="refCategoryInput">카테고리</label>
-      <input type="text" id="refCategoryInput" list="categoryDatalist" placeholder="예: FAQ/도움말" />
+      <label for="csCategoryInput">카테고리</label>
+      <input type="text" id="csCategoryInput" list="categoryDatalist" placeholder="예: 버튼/CTA" />
       <datalist id="categoryDatalist"></datalist>
     </div>
     <div class="modal-field">
-      <label for="refTagsInput">태그 (쉼표로 구분)</label>
-      <input type="text" id="refTagsInput" placeholder="예: FAQ, 아코디언, 모바일" />
+      <label for="csTagsInput">태그 (쉼표로 구분)</label>
+      <input type="text" id="csTagsInput" placeholder="예: 프라이머리 버튼, 모바일" />
     </div>
     <div class="modal-field">
-      <label for="refNotesInput">메모</label>
-      <textarea id="refNotesInput" rows="2" placeholder="예: 팀장 승인 완료된 기준 화면"></textarea>
+      <label for="csNotesInput">메모</label>
+      <textarea id="csNotesInput" rows="2" placeholder="예: 팀장 승인 완료된 기준 컴포넌트"></textarea>
     </div>
 
     <div class="modal-actions">
-      <button type="button" class="btn" id="refModalCancelBtn">취소</button>
-      <button type="button" class="btn btn-primary" id="refModalSaveBtn" disabled>저장</button>
+      <button type="button" class="btn" id="csModalCancelBtn">취소</button>
+      <button type="button" class="btn btn-primary" id="csModalSaveBtn" disabled>저장</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="competitorModalOverlay" style="display:none;">
+  <div class="modal-box">
+    <h3>경쟁사 레퍼런스 추가</h3>
+    <div class="hint" style="margin-bottom:12px;">타사/경쟁사의 화면을 벤치마킹 자료로 등록합니다. QA 비교에는 쓰이지 않고, 패턴 컨설턴트가 답변할 때 참고 사례로 활용합니다.</div>
+    <div class="modal-field">
+      <label for="compCategoryInput">카테고리</label>
+      <input type="text" id="compCategoryInput" list="categoryDatalist" placeholder="예: FAQ/도움말" />
+    </div>
+    <div class="modal-field">
+      <label for="compServiceNameInput">서비스/회사명</label>
+      <input type="text" id="compServiceNameInput" placeholder="예: 토스" />
+    </div>
+    <div class="modal-field">
+      <label for="compUrlInput">참고 URL (선택)</label>
+      <input type="text" id="compUrlInput" placeholder="https://..." />
+    </div>
+    <div class="modal-field">
+      <label for="compImageInput">스크린샷 (선택)</label>
+      <input type="file" id="compImageInput" accept="image/png,image/jpeg" />
+    </div>
+    <div class="modal-field">
+      <label for="compNotesInput">메모 (어떤 점이 참고할 만한지)</label>
+      <textarea id="compNotesInput" rows="3" placeholder="예: FAQ를 검색 가능한 별도 페이지로 구현, 카테고리 필터 제공"></textarea>
+    </div>
+    <div class="modal-field">
+      <label for="compTagsInput">태그 (쉼표로 구분)</label>
+      <input type="text" id="compTagsInput" placeholder="예: FAQ, 검색" />
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn" id="compModalCancelBtn">취소</button>
+      <button type="button" class="btn btn-primary" id="compModalSaveBtn" disabled>저장</button>
     </div>
   </div>
 </div>
