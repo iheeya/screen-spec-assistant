@@ -1358,24 +1358,6 @@ function initRulesetToolbar() {
     if (file) importRulesetFile(file);
     ev.target.value = "";
   });
-  $("#addTextRuleBtn").addEventListener("click", () => {
-    const blank = {
-      id: uid("user-new"),
-      category: "미분류",
-      type: "rule",
-      condition: "",
-      recommendation: "",
-      source: "",
-      rationale: "",
-      avoid_when: [],
-      implementation_notes: [],
-      created_by: "user-session",
-    };
-    ruleset.unshift(blank);
-    saveRuleset();
-    pendingFocusRuleId = blank.id;
-    renderRulesetView();
-  });
 }
 
 function populateQaCategorySelect() {
@@ -1604,6 +1586,61 @@ function renderReferenceCard(rule) {
   }
 
   return card;
+}
+
+// ===================== 룰셋: 텍스트 규칙 추가 모달 =====================
+
+function initTextRuleModal() {
+  $("#addTextRuleBtn").addEventListener("click", openTextRuleModal);
+  $("#trModalCancelBtn").addEventListener("click", closeTextRuleModal);
+  $("#textRuleModalOverlay").addEventListener("click", (ev) => {
+    if (ev.target.id === "textRuleModalOverlay") closeTextRuleModal();
+  });
+  $("#trRecommendationInput").addEventListener("input", updateTextRuleSaveEnabled);
+  $("#trModalSaveBtn").addEventListener("click", saveTextRule);
+}
+
+function updateTextRuleSaveEnabled() {
+  $("#trModalSaveBtn").disabled = !$("#trRecommendationInput").value.trim();
+}
+
+function openTextRuleModal() {
+  ["trCategoryInput", "trConditionInput", "trRecommendationInput", "trSourceInput", "trRationaleInput", "trAvoidInput", "trNotesInput"].forEach(
+    (id) => ($(`#${id}`).value = "")
+  );
+  populateCategoryDatalist();
+  updateTextRuleSaveEnabled();
+  $("#textRuleModalOverlay").style.display = "flex";
+}
+
+function closeTextRuleModal() {
+  $("#textRuleModalOverlay").style.display = "none";
+}
+
+function saveTextRule() {
+  const recommendation = $("#trRecommendationInput").value.trim();
+  if (!recommendation) return;
+  const category = $("#trCategoryInput").value.trim() || "미분류";
+
+  const rule = {
+    id: uid("user-" + slugify(category)),
+    category,
+    type: "rule",
+    condition: $("#trConditionInput").value.trim(),
+    recommendation,
+    source: $("#trSourceInput").value.trim(),
+    rationale: $("#trRationaleInput").value.trim(),
+    avoid_when: $("#trAvoidInput").value.split("\n").map((s) => s.trim()).filter(Boolean),
+    implementation_notes: $("#trNotesInput").value.split("\n").map((s) => s.trim()).filter(Boolean),
+    created_by: "user-session",
+    created_at: new Date().toISOString(),
+  };
+  ruleset.unshift(rule);
+  saveRuleset();
+  pendingFocusRuleId = rule.id;
+  renderRulesetView();
+  closeTextRuleModal();
+  showToast("텍스트 규칙이 룰셋에 저장되었습니다.");
 }
 
 // ===================== 룰셋: 레퍼런스 디자인 추가 모달 =====================
@@ -1857,6 +1894,7 @@ function init() {
   initQaUploads();
   initQaSourceToggle();
   initRulesetToolbar();
+  initTextRuleModal();
   initReferenceModal();
   initSettingsTab();
   initFigmaSettings();

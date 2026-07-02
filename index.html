@@ -207,6 +207,45 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="textRuleModalOverlay" style="display:none;">
+  <div class="modal-box">
+    <h3>텍스트 규칙 추가</h3>
+    <div class="modal-field">
+      <label for="trCategoryInput">카테고리</label>
+      <input type="text" id="trCategoryInput" list="categoryDatalist" placeholder="예: FAQ/도움말" />
+    </div>
+    <div class="modal-field">
+      <label for="trConditionInput">조건 (이 추천이 적용되는 상황)</label>
+      <textarea id="trConditionInput" rows="2" placeholder="예: 항목 10개 미만, 단일 카테고리"></textarea>
+    </div>
+    <div class="modal-field">
+      <label for="trRecommendationInput">추천</label>
+      <textarea id="trRecommendationInput" rows="2" placeholder="예: 아코디언"></textarea>
+    </div>
+    <div class="modal-field">
+      <label for="trSourceInput">출처</label>
+      <input type="text" id="trSourceInput" placeholder="예: Nielsen Norman Group" />
+    </div>
+    <div class="modal-field">
+      <label for="trRationaleInput">근거</label>
+      <textarea id="trRationaleInput" rows="2" placeholder="이 패턴을 추천하는 이유"></textarea>
+    </div>
+    <div class="modal-field">
+      <label for="trAvoidInput">피해야 할 때 (줄바꿈으로 구분)</label>
+      <textarea id="trAvoidInput" rows="2"></textarea>
+    </div>
+    <div class="modal-field">
+      <label for="trNotesInput">구현 팁 (줄바꿈으로 구분)</label>
+      <textarea id="trNotesInput" rows="2"></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn" id="trModalCancelBtn">취소</button>
+      <button type="button" class="btn btn-primary" id="trModalSaveBtn" disabled>저장</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="ruleset-seed.js"></script>
 <script src="app.js"></script>
