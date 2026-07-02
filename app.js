@@ -31,6 +31,8 @@ let qaFiles = { pptx: null, images: [] }; // images: [{file, slideIndex}]
 let qaRunning = false;
 let qaSource = "pptx"; // "pptx" | "figma"
 
+let pendingFocusRuleId = null; // 새로 추가된 텍스트 규칙 카드로 스크롤/자동 편집하기 위한 표식
+
 let refModalState = {
   source: "pptx",
   parsedPptx: null,
@@ -1371,9 +1373,8 @@ function initRulesetToolbar() {
     };
     ruleset.unshift(blank);
     saveRuleset();
+    pendingFocusRuleId = blank.id;
     renderRulesetView();
-    const firstCard = $(".rule-card");
-    if (firstCard) firstCard.scrollIntoView({ behavior: "smooth", block: "center" });
   });
 }
 
@@ -1467,11 +1468,18 @@ function renderRulesetView() {
   }
 
   populateQaCategorySelect();
+
+  if (pendingFocusRuleId) {
+    const target = container.querySelector(`[data-id="${pendingFocusRuleId}"]`);
+    if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+    pendingFocusRuleId = null;
+  }
 }
 
 function renderRuleCard(rule) {
   if (rule.type === "reference_design") return renderReferenceCard(rule);
 
+  const startExpanded = rule.id === pendingFocusRuleId;
   const card = el("div", { class: "rule-card", attrs: { "data-id": rule.id } });
 
   const top = el("div", { class: "rule-top" });
@@ -1480,7 +1488,7 @@ function renderRuleCard(rule) {
     el("div", { class: "rule-condition", text: rule.condition || "" }),
   ]);
   const actions = el("div", { class: "rule-actions" });
-  const editBtn = el("button", { class: "btn btn-sm", text: "편집" });
+  const editBtn = el("button", { class: "btn btn-sm", text: startExpanded ? "닫기" : "편집" });
   const deleteBtn = el("button", { class: "btn btn-sm btn-danger", text: "삭제" });
   deleteBtn.addEventListener("click", () => {
     if (!confirm("이 룰을 삭제할까요?")) return;
@@ -1510,7 +1518,7 @@ function renderRuleCard(rule) {
     card.appendChild(el("div", { class: "rule-meta", text: `구현 팁: ${rule.implementation_notes.join(" / ")}` }));
   }
 
-  const editForm = el("div", { attrs: { style: "display:none;margin-top:10px;" } });
+  const editForm = el("div", { attrs: { style: `display:${startExpanded ? "block" : "none"};margin-top:10px;` } });
   editBtn.addEventListener("click", () => {
     const showing = editForm.style.display !== "none";
     editForm.style.display = showing ? "none" : "block";
