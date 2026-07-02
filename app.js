@@ -9,7 +9,10 @@ const LS_KEYS = {
   apiKey: "psd_api_key",
   model: "psd_model",
   ruleset: "psd_ruleset",
+  figmaToken: "psd_figma_token",
 };
+
+const FIGMA_API_BASE = "https://api.figma.com/v1";
 
 const DEFAULT_MODEL = "claude-opus-4-8";
 const MODEL_OPTIONS = [
@@ -26,6 +29,16 @@ let ruleset = [];
 let consultantApiMessages = []; // Claude API로 보내는 실제 멀티턴 메시지(콘텐츠 블록 그대로 보관)
 let qaFiles = { pptx: null, images: [] }; // images: [{file, slideIndex}]
 let qaRunning = false;
+let qaSource = "pptx"; // "pptx" | "figma"
+
+let refModalState = {
+  source: "pptx",
+  parsedPptx: null,
+  selectedSlideIndex: null,
+  figmaFrames: [],
+  selectedFrameIndex: null,
+  figmaComponentsMap: {},
+};
 
 // ===================== 유틸 =====================
 
@@ -115,6 +128,269 @@ function updateApiKeyStatus() {
   const has = !!getApiKey();
   dot.classList.toggle("ok", has);
   dot.title = has ? "API 키가 저장되어 있습니다" : "API 키를 입력해주세요";
+}
+
+// ===================== Figma 토큰 =====================
+
+function getFigmaToken() {
+  return localStorage.getItem(LS_KEYS.figmaToken) || "";
+}
+function setFigmaToken(v) {
+  if (v) localStorage.setItem(LS_KEYS.figmaToken, v);
+  else localStorage.removeItem(LS_KEYS.figmaToken);
+}
+
+// ===================== Figma REST API =====================
+
+/**
+ * 피그마 파일 URL(예: https://www.figma.com/design/KEY/slug?node-id=1-2) 또는
+ * 파일 key를 그대로 입력한 경우 모두 처리해 { fileKey, nodeId }를 반환한다.
+ */
+function parseFigmaKeyAndNode(input) {
+  const trimmed = (input || "").trim();
+  if (!trimmed) return { fileKey: "", nodeId: "" };
+  const urlMatch = trimmed.match(/figma\.com\/(?:file|design|proto)\/([a-zA-Z0-9]+)/);
+  const fileKey = urlMatch ? urlMatch[1] : trimmed;
+  let nodeId = "";
+  const nodeMatch = trimmed.match(/node-id=([^&]+)/);
+  if (nodeMatch) {
+    nodeId = decodeURIComponent(nodeMatch[1]).replace(/-/g, ":");
+  }
+  return { fileKey, nodeId };
+}
+
+function looksLikeFigmaNodeId(str) {
+  return /^\d+[:\-]\d+$/.test((str || "").trim());
+}
+
+async function figmaFetch(path) {
+  const token = getFigmaToken();
+  if (!token) {
+    throw new Error("설정 탭에서 Figma Personal Access Token을 먼저 입력해주세요.");
+  }
+  let res;
+  try {
+    res = await fetch(`${FIGMA_API_BASE}${path}`, {
+      headers: { "X-Figma-Token": token },
+    });
+  } catch (networkErr) {
+    throw new Error(
+      "Figma API에 연결할 수 없습니다. 인터넷 연결 또는 광고 차단 확장 프로그램을 확인해주세요. " +
+        "(Figma API는 브라우저 직접 호출을 위한 CORS를 자체적으로 허용하므로 별도 서버는 필요하지 않습니다.)"
+    );
+  }
+  if (!res.ok) {
+    let msg = `Figma API 오류 (HTTP ${res.status})`;
+    try {
+      const j = await res.json();
+      if (j?.err) msg = `Figma API 오류: ${j.err}`;
+    } catch (e) {
+      /* 무시 */
+    }
+    if (res.status === 403) msg = "Figma 토큰이 올바르지 않거나 이 파일에 접근할 권한이 없습니다.";
+    if (res.status === 404) msg = "Figma 파일 또는 노드를 찾을 수 없습니다. URL/key를 확인해주세요.";
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+function fetchFigmaFile(fileKey) {
+  return figmaFetch(`/files/${fileKey}`);
+}
+
+function fetchFigmaNodes(fileKey, nodeIds) {
+  return figmaFetch(`/files/${fileKey}/nodes?ids=${encodeURIComponent(nodeIds.join(","))}`);
+}
+
+function walkFigmaNodes(node, visitFn, depth = 0) {
+  visitFn(node, depth);
+  (node.children || []).forEach((child) => walkFigmaNodes(child, visitFn, depth + 1));
+}
+
+const FIGMA_FRAME_LIKE_TYPES = new Set(["FRAME", "COMPONENT", "COMPONENT_SET", "SECTION"]);
+
+/**
+ * 필터가 없으면 각 페이지(canvas)의 최상위 프레임만 수집한다(중첩된 오토레이아웃 그룹 잡음 방지).
+ * 이름 필터가 있으면 트리 전체에서 이름이 일치하는 프레임형 노드를 찾는다.
+ */
+function collectFigmaFrames(documentNode, { nameFilter = "", maxFrames = 20 } = {}) {
+  const frames = [];
+  if (nameFilter) {
+    walkFigmaNodes(documentNode, (node) => {
+      if (frames.length >= maxFrames) return;
+      if (FIGMA_FRAME_LIKE_TYPES.has(node.type) && node.name.toLowerCase().includes(nameFilter.toLowerCase())) {
+        frames.push(node);
+      }
+    });
+    return frames;
+  }
+  (documentNode.children || []).forEach((page) => {
+    (page.children || []).forEach((node) => {
+      if (frames.length >= maxFrames) return;
+      if (FIGMA_FRAME_LIKE_TYPES.has(node.type)) frames.push(node);
+    });
+  });
+  return frames.slice(0, maxFrames);
+}
+
+function figmaColorToHex(color) {
+  if (!color) return null;
+  const toHex = (v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, "0");
+  return `#${toHex(color.r)}${toHex(color.g)}${toHex(color.b)}`.toUpperCase();
+}
+
+/**
+ * 프레임 노드를 기존 PPTX 검사 로직(runCoordinateChecks 등)이 그대로 재사용 가능한
+ * shape 배열로 변환한다. 좌표는 프레임 좌상단을 원점(0,0)으로 하는 상대좌표로 환산한다.
+ */
+function figmaNodeToShapeList(frameNode, componentsMap) {
+  const originX = frameNode.absoluteBoundingBox ? frameNode.absoluteBoundingBox.x : 0;
+  const originY = frameNode.absoluteBoundingBox ? frameNode.absoluteBoundingBox.y : 0;
+  const shapes = [];
+
+  walkFigmaNodes(frameNode, (node) => {
+    if (node.id === frameNode.id) return;
+    const box = node.absoluteBoundingBox;
+    const hasPosition = !!box;
+    const isText = node.type === "TEXT";
+    const isInstance = node.type === "INSTANCE";
+
+    const fontSizes = [];
+    const fontNames = [];
+    if (isText && node.style) {
+      if (node.style.fontSize) fontSizes.push(Math.round(node.style.fontSize));
+      if (node.style.fontFamily) fontNames.push(node.style.fontFamily);
+    }
+
+    let fillHex = null;
+    if (node.fills && node.fills.length && node.fills[0].type === "SOLID") {
+      fillHex = figmaColorToHex(node.fills[0].color);
+    }
+
+    let componentInfo = null;
+    if (isInstance && node.componentId) {
+      const comp = componentsMap[node.componentId];
+      componentInfo = { componentId: node.componentId, componentName: comp ? comp.name : node.componentId };
+    }
+
+    const overriddenFields = (node.overrides || [])
+      .filter((o) => o.id === node.id)
+      .flatMap((o) => o.overriddenFields || []);
+
+    shapes.push({
+      name: node.name || node.id,
+      hasPosition,
+      x: hasPosition ? box.x - originX : null,
+      y: hasPosition ? box.y - originY : null,
+      w: hasPosition ? box.width : null,
+      h: hasPosition ? box.height : null,
+      text: isText ? node.characters || "" : "",
+      fontSizes,
+      fontNames,
+      fillHex,
+      isInstance,
+      componentInfo,
+      overriddenFields,
+    });
+  });
+
+  return shapes;
+}
+
+function figmaFrameToSlide(frameNode, index, componentsMap) {
+  return {
+    index,
+    fileName: frameNode.name,
+    shapes: figmaNodeToShapeList(frameNode, componentsMap),
+    widthPx: frameNode.absoluteBoundingBox ? frameNode.absoluteBoundingBox.width : 0,
+    heightPx: frameNode.absoluteBoundingBox ? frameNode.absoluteBoundingBox.height : 0,
+  };
+}
+
+/**
+ * QA 리뷰어의 "피그마 URL로 검토" 입력값을 읽어 slide 형식 배열로 변환한다.
+ */
+async function loadFigmaSlides() {
+  const raw = $("#figmaUrlInput").value.trim();
+  const filterRaw = $("#figmaFrameFilterInput").value.trim();
+  const { fileKey, nodeId: urlNodeId } = parseFigmaKeyAndNode(raw);
+  if (!fileKey) throw new Error("올바른 피그마 파일 URL 또는 key를 입력해주세요.");
+
+  let effectiveNodeId = "";
+  let nameFilter = "";
+  if (looksLikeFigmaNodeId(filterRaw)) {
+    effectiveNodeId = filterRaw.replace("-", ":");
+  } else if (filterRaw) {
+    nameFilter = filterRaw;
+  } else if (urlNodeId) {
+    effectiveNodeId = urlNodeId;
+  }
+
+  let componentsMap = {};
+  let frameNodes = [];
+
+  if (effectiveNodeId) {
+    const nodesResp = await fetchFigmaNodes(fileKey, [effectiveNodeId]);
+    componentsMap = nodesResp.components || {};
+    const entry = nodesResp.nodes[effectiveNodeId];
+    if (!entry || !entry.document) throw new Error("지정한 node-id를 찾을 수 없습니다.");
+    frameNodes = [entry.document];
+  } else {
+    const fileData = await fetchFigmaFile(fileKey);
+    componentsMap = fileData.components || {};
+    frameNodes = collectFigmaFrames(fileData.document, { nameFilter, maxFrames: 20 });
+  }
+
+  if (!frameNodes.length) {
+    throw new Error("조건에 맞는 프레임을 찾지 못했습니다. 필터를 확인해주세요.");
+  }
+
+  return frameNodes.map((node, i) => figmaFrameToSlide(node, i + 1, componentsMap));
+}
+
+// ===================== 컴포넌트 일관성 미니 체커 =====================
+
+function runComponentConsistencyCheck(slide) {
+  const findings = [];
+  const instances = slide.shapes.filter((s) => s.isInstance && s.componentInfo);
+  const byComponent = groupBy(instances, (s) => s.componentInfo.componentId);
+
+  Object.values(byComponent).forEach((group) => {
+    if (group.length < 2) return;
+    const componentName = group[0].componentInfo.componentName;
+
+    const sizes = [...new Set(group.map((s) => s.fontSizes[0]).filter((v) => v != null))];
+    if (sizes.length > 1) {
+      findings.push({
+        severity: "warning",
+        message: `같은 컴포넌트("${componentName}")의 인스턴스인데 폰트 크기가 다릅니다 (${sizes.join(", ")}pt)`,
+        location: group.map((s) => `"${truncate(s.name, 14)}"`).join(", "),
+      });
+    }
+
+    const colors = [...new Set(group.map((s) => s.fillHex).filter(Boolean))];
+    if (colors.length > 1) {
+      findings.push({
+        severity: "warning",
+        message: `같은 컴포넌트("${componentName}")의 인스턴스인데 색상이 다릅니다 (${colors.join(", ")})`,
+        location: group.map((s) => `"${truncate(s.name, 14)}"`).join(", "),
+      });
+    }
+
+    const overridden = group.filter((s) => s.overriddenFields && s.overriddenFields.length);
+    if (overridden.length) {
+      const fieldNames = [...new Set(overridden.flatMap((s) => s.overriddenFields))];
+      findings.push({
+        severity: "suggestion",
+        message: `같은 컴포넌트("${componentName}")의 인스턴스 중 ${overridden.length}개가 마스터 대비 속성을 오버라이드했습니다 (${fieldNames.join(
+          ", "
+        )})`,
+        location: overridden.map((s) => `"${truncate(s.name, 14)}"`).join(", "),
+      });
+    }
+  });
+
+  return findings;
 }
 
 // ===================== Claude API 래퍼 =====================
@@ -242,6 +518,7 @@ const PROPOSE_RULE_TOOL = {
 
 function buildCompactRuleset() {
   return ruleset
+    .filter((r) => r.type !== "reference_design")
     .map((r) => `[${r.id}] (${r.category}) 조건: ${r.condition} → 추천: ${r.recommendation}`)
     .join("\n");
 }
@@ -663,7 +940,7 @@ async function runTypoCheck(slides) {
   const blocks = slides
     .map((s) => {
       const texts = s.shapes.map((sh) => sh.text).filter(Boolean);
-      return texts.length ? `[슬라이드 ${s.index}]\n${texts.join("\n")}` : null;
+      return texts.length ? `[화면 ${s.index}]\n${texts.join("\n")}` : null;
     })
     .filter(Boolean);
   if (!blocks.length) return [];
@@ -756,37 +1033,134 @@ async function runVisionCheck(file, slideIndex, slideTextSummary) {
   }));
 }
 
+// ===================== 룰셋 레퍼런스 디자인과 일관성 비교 =====================
+
+const COMPARISON_SCHEMA = {
+  type: "object",
+  properties: {
+    differences: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          severity: { type: "string", enum: ["error", "warning", "suggestion"] },
+          message: { type: "string" },
+        },
+        required: ["severity", "message"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["differences"],
+  additionalProperties: false,
+};
+
+function compactShapesForCompare(shapes) {
+  return shapes
+    .filter((s) => s.hasPosition)
+    .map((s) => ({
+      name: s.name,
+      x: Math.round(s.x),
+      y: Math.round(s.y),
+      w: Math.round(s.w),
+      h: Math.round(s.h),
+      text: s.text,
+      fontSizes: s.fontSizes,
+      fontNames: s.fontNames,
+    }));
+}
+
+async function runReferenceComparison(slide, ref) {
+  const targetShapes = compactShapesForCompare(slide.shapes);
+  const refElements = (ref.extracted_layout && ref.extracted_layout.elements) || [];
+  if (!targetShapes.length || !refElements.length) return [];
+
+  const resp = await callClaude({
+    system:
+      "너는 화면설계서 일관성 체커다. '기준(레퍼런스) 화면'의 요소 목록과 '검토 대상 화면'의 요소 목록(좌표 x/y/width/height, 텍스트, 폰트)을 비교해 " +
+      "실제로 불일치하는 부분(폰트 크기/종류, 위치, 크기 등 스타일)만 지적하라. 콘텐츠(텍스트 내용 자체)가 다른 것은 무시하고, 같은 역할을 하는 요소끼리 " +
+      "스타일이 다른 경우만 보고하라. 사소한 몇 픽셀 차이는 무시하고, 확신이 없으면 보고하지 마라. 각 차이는 구체적 수치를 포함해 설명하라.",
+    messages: [
+      {
+        role: "user",
+        content:
+          `기준 화면 (등록: ${ref.created_at ? ref.created_at.slice(0, 10) : "미상"}, 메모: ${ref.notes || "없음"}):\n` +
+          `${JSON.stringify(refElements)}\n\n검토 대상 화면 (${slide.index}번):\n${JSON.stringify(targetShapes)}`,
+      },
+    ],
+    maxTokens: 1536,
+    outputSchema: COMPARISON_SCHEMA,
+  });
+
+  const textBlock = (resp.content || []).find((b) => b.type === "text");
+  if (!textBlock) return [];
+  const parsed = JSON.parse(textBlock.text);
+  return (parsed.differences || []).map((d) => ({
+    severity: d.severity,
+    message: `[일관성] 룰셋 기준(${ref.created_at ? ref.created_at.slice(0, 10) : "등록일 미상"})과 비교: ${d.message}`,
+    location: `참고: ${ref.notes || ref.category}`,
+  }));
+}
+
 // ===================== QA 리뷰어: 오케스트레이션 & 렌더링 =====================
 
 function updateQaProgress(text) {
   $("#qaProgress").textContent = text;
 }
 
+function updateRunQaBtnState() {
+  if (qaRunning) {
+    $("#runQaBtn").disabled = true;
+    return;
+  }
+  if (qaSource === "pptx") {
+    $("#runQaBtn").disabled = !qaFiles.pptx;
+  } else {
+    $("#runQaBtn").disabled = !$("#figmaUrlInput").value.trim();
+  }
+}
+
 function setQaRunning(running) {
   qaRunning = running;
-  $("#runQaBtn").disabled = running || !qaFiles.pptx;
+  updateRunQaBtnState();
 }
 
 async function runQaReview() {
-  if (!qaFiles.pptx) {
+  if (qaSource === "pptx" && !qaFiles.pptx) {
     showToast(".pptx 파일을 먼저 업로드해주세요.", true);
+    return;
+  }
+  if (qaSource === "figma" && !$("#figmaUrlInput").value.trim()) {
+    showToast("피그마 파일 URL 또는 key를 먼저 입력해주세요.", true);
     return;
   }
   setQaRunning(true);
   $("#qaReport").innerHTML = "";
 
   const reportBySlide = {};
+  const unitLabel = qaSource === "pptx" ? "슬라이드" : "프레임";
 
   try {
-    updateQaProgress("PPTX 파일 분석 중 (좌표/텍스트/폰트 추출)...");
-    const parsed = await parsePptx(qaFiles.pptx);
-    parsed.slides.forEach((s) => {
-      reportBySlide[s.index] = runCoordinateChecks(s, parsed.slideWidthPx, parsed.slideHeightPx);
+    let slides;
+    if (qaSource === "pptx") {
+      updateQaProgress("PPTX 파일 분석 중 (좌표/텍스트/폰트 추출)...");
+      const parsed = await parsePptx(qaFiles.pptx);
+      slides = parsed.slides.map((s) => ({ ...s, widthPx: parsed.slideWidthPx, heightPx: parsed.slideHeightPx }));
+    } else {
+      updateQaProgress("피그마 파일 불러오는 중...");
+      slides = await loadFigmaSlides();
+    }
+
+    slides.forEach((s) => {
+      reportBySlide[s.index] = runCoordinateChecks(s, s.widthPx, s.heightPx);
+      if (qaSource === "figma") {
+        reportBySlide[s.index].push(...runComponentConsistencyCheck(s));
+      }
     });
 
     updateQaProgress("맞춤법/오타 검토 중 (Claude API)...");
     try {
-      const typoResults = await runTypoCheck(parsed.slides);
+      const typoResults = await runTypoCheck(slides);
       typoResults.forEach(({ slide, finding }) => {
         (reportBySlide[slide] = reportBySlide[slide] || []).push(finding);
       });
@@ -794,11 +1168,11 @@ async function runQaReview() {
       showToast(`맞춤법 검토를 건너뜁니다: ${e.message}`, true);
     }
 
-    if (qaFiles.images.length) {
+    if (qaSource === "pptx" && qaFiles.images.length) {
       for (const img of qaFiles.images) {
         updateQaProgress(`이미지 분석 중 (슬라이드 ${img.slideIndex}, Vision)...`);
         try {
-          const slideData = parsed.slides.find((s) => s.index === img.slideIndex);
+          const slideData = slides.find((s) => s.index === img.slideIndex);
           const textSummary = slideData ? slideData.shapes.map((s) => s.text).filter(Boolean).join(" / ") : "";
           const visionFindings = await runVisionCheck(img.file, img.slideIndex, textSummary);
           visionFindings.forEach((f) => {
@@ -810,8 +1184,30 @@ async function runQaReview() {
       }
     }
 
-    renderQaReport(reportBySlide, parsed.slides.length);
-    updateQaProgress(`완료 — 슬라이드 ${parsed.slides.length}개 검토됨`);
+    const compareCategory = $("#qaCategorySelect").value;
+    if (compareCategory) {
+      const refs = ruleset
+        .filter((r) => r.type === "reference_design" && r.category === compareCategory)
+        .slice(-3);
+      if (refs.length) {
+        for (const slide of slides) {
+          for (const ref of refs) {
+            updateQaProgress(`레퍼런스 디자인과 비교 중 (${unitLabel} ${slide.index})...`);
+            try {
+              const diffFindings = await runReferenceComparison(slide, ref);
+              diffFindings.forEach((f) => {
+                (reportBySlide[slide.index] = reportBySlide[slide.index] || []).push(f);
+              });
+            } catch (e) {
+              showToast(`레퍼런스 비교 실패 (${unitLabel} ${slide.index}): ${e.message}`, true);
+            }
+          }
+        }
+      }
+    }
+
+    renderQaReport(reportBySlide, slides.length);
+    updateQaProgress(`완료 — ${unitLabel} ${slides.length}개 검토됨`);
   } catch (e) {
     showToast(`QA 리뷰 실패: ${e.message}`, true);
     updateQaProgress("");
@@ -894,7 +1290,7 @@ function initQaUploads() {
     const file = pptxInput.files[0];
     qaFiles.pptx = file || null;
     pptxName.textContent = file ? `선택됨: ${file.name}` : "";
-    $("#runQaBtn").disabled = !file;
+    updateRunQaBtnState();
   });
 
   const imageInput = $("#imageInput");
@@ -908,6 +1304,20 @@ function initQaUploads() {
   });
 
   $("#runQaBtn").addEventListener("click", runQaReview);
+}
+
+function initQaSourceToggle() {
+  $all(".qa-source-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      $all(".qa-source-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      qaSource = btn.dataset.source;
+      $("#pptxUploadBox").style.display = qaSource === "pptx" ? "block" : "none";
+      $("#figmaUploadBox").style.display = qaSource === "figma" ? "block" : "none";
+      updateRunQaBtnState();
+    });
+  });
+  $("#figmaUrlInput").addEventListener("input", updateRunQaBtnState);
 }
 
 function renderImageFileList() {
@@ -946,10 +1356,11 @@ function initRulesetToolbar() {
     if (file) importRulesetFile(file);
     ev.target.value = "";
   });
-  $("#addRuleBtn").addEventListener("click", () => {
+  $("#addTextRuleBtn").addEventListener("click", () => {
     const blank = {
       id: uid("user-new"),
       category: "미분류",
+      type: "rule",
       condition: "",
       recommendation: "",
       source: "",
@@ -964,6 +1375,26 @@ function initRulesetToolbar() {
     const firstCard = $(".rule-card");
     if (firstCard) firstCard.scrollIntoView({ behavior: "smooth", block: "center" });
   });
+}
+
+function populateQaCategorySelect() {
+  const select = $("#qaCategorySelect");
+  if (!select) return;
+  const current = select.value;
+  const categories = [...new Set(ruleset.map((r) => r.category).filter(Boolean))].sort();
+  select.innerHTML = "";
+  select.appendChild(el("option", { text: "비교 안 함", attrs: { value: "" } }));
+  categories.forEach((c) => select.appendChild(el("option", { text: c, attrs: { value: c } })));
+  if (categories.includes(current)) select.value = current;
+}
+
+function populateCategoryDatalist() {
+  const dl = $("#categoryDatalist");
+  if (!dl) return;
+  dl.innerHTML = "";
+  [...new Set(ruleset.map((r) => r.category).filter(Boolean))]
+    .sort()
+    .forEach((c) => dl.appendChild(el("option", { attrs: { value: c } })));
 }
 
 function exportRuleset() {
@@ -1014,29 +1445,33 @@ function renderRulesetView() {
 
   const filtered = ruleset.filter((r) => {
     if (!query) return true;
-    return [r.category, r.condition, r.recommendation, r.source]
-      .join(" ")
-      .toLowerCase()
-      .includes(query);
+    const haystack =
+      r.type === "reference_design"
+        ? [r.category, r.notes, r.source_ref, (r.tags || []).join(" ")].join(" ")
+        : [r.category, r.condition, r.recommendation, r.source].join(" ");
+    return haystack.toLowerCase().includes(query);
   });
 
   if (!filtered.length) {
     container.appendChild(el("div", { text: "표시할 룰셋이 없습니다.", attrs: { style: "color:var(--color-text-muted);" } }));
-    return;
+  } else {
+    const byCategory = groupBy(filtered, (r) => r.category || "미분류");
+    Object.keys(byCategory)
+      .sort()
+      .forEach((category) => {
+        const group = el("div", { class: "ruleset-category-group" });
+        group.appendChild(el("h3", { text: `${category} (${byCategory[category].length})` }));
+        byCategory[category].forEach((rule) => group.appendChild(renderRuleCard(rule)));
+        container.appendChild(group);
+      });
   }
 
-  const byCategory = groupBy(filtered, (r) => r.category || "미분류");
-  Object.keys(byCategory)
-    .sort()
-    .forEach((category) => {
-      const group = el("div", { class: "ruleset-category-group" });
-      group.appendChild(el("h3", { text: `${category} (${byCategory[category].length})` }));
-      byCategory[category].forEach((rule) => group.appendChild(renderRuleCard(rule)));
-      container.appendChild(group);
-    });
+  populateQaCategorySelect();
 }
 
 function renderRuleCard(rule) {
+  if (rule.type === "reference_design") return renderReferenceCard(rule);
+
   const card = el("div", { class: "rule-card", attrs: { "data-id": rule.id } });
 
   const top = el("div", { class: "rule-top" });
@@ -1123,7 +1558,241 @@ function renderRuleCard(rule) {
   return card;
 }
 
+function renderReferenceCard(rule) {
+  const card = el("div", { class: "rule-card rule-card-ref", attrs: { "data-id": rule.id } });
+
+  const top = el("div", { class: "rule-top" });
+  const info = el("div", {}, [
+    el("div", { class: "rule-recommend" }, [el("span", { class: "tag-ref", text: "🖼️ 레퍼런스 디자인" })]),
+    el("div", { class: "rule-condition", text: rule.notes || "(메모 없음)" }),
+  ]);
+  const actions = el("div", { class: "rule-actions" });
+  const deleteBtn = el("button", { class: "btn btn-sm btn-danger", text: "삭제" });
+  deleteBtn.addEventListener("click", () => {
+    if (!confirm("이 레퍼런스 디자인을 삭제할까요?")) return;
+    ruleset = ruleset.filter((r) => r.id !== rule.id);
+    saveRuleset();
+    renderRulesetView();
+  });
+  actions.appendChild(deleteBtn);
+  top.appendChild(info);
+  top.appendChild(actions);
+  card.appendChild(top);
+
+  const elementCount = ((rule.extracted_layout && rule.extracted_layout.elements) || []).length;
+  const createdLabel = rule.created_at ? new Date(rule.created_at).toLocaleDateString("ko-KR") : "";
+  card.appendChild(
+    el("div", { class: "rule-meta" }, [
+      el("span", { text: `출처: ${rule.source_ref || "-"}` }),
+      el("span", { text: `요소 ${elementCount}개` }),
+      createdLabel ? el("span", { text: `등록: ${createdLabel}` }) : null,
+    ])
+  );
+
+  if (rule.tags && rule.tags.length) {
+    const tagsRow = el("div", { attrs: { style: "margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;" } });
+    rule.tags.forEach((t) => tagsRow.appendChild(el("span", { class: "file-chip", text: t })));
+    card.appendChild(tagsRow);
+  }
+
+  return card;
+}
+
+// ===================== 룰셋: 레퍼런스 디자인 추가 모달 =====================
+
+function shapesToElements(shapes) {
+  return shapes
+    .filter((s) => s.hasPosition)
+    .map((s) => {
+      const item = {
+        type: s.text ? "text" : "shape",
+        x: Math.round(s.x),
+        y: Math.round(s.y),
+        width: Math.round(s.w),
+        height: Math.round(s.h),
+      };
+      if (s.fontSizes && s.fontSizes[0] != null) item.fontSize = s.fontSizes[0];
+      if (s.text) item.content = s.text;
+      return item;
+    });
+}
+
+function initReferenceModal() {
+  $("#addReferenceBtn").addEventListener("click", openReferenceModal);
+  $("#refModalCancelBtn").addEventListener("click", closeReferenceModal);
+  $("#referenceModalOverlay").addEventListener("click", (ev) => {
+    if (ev.target.id === "referenceModalOverlay") closeReferenceModal();
+  });
+
+  $all(".ref-source-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      $all(".ref-source-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      refModalState.source = btn.dataset.source;
+      $("#refPptxSection").style.display = refModalState.source === "pptx" ? "block" : "none";
+      $("#refFigmaSection").style.display = refModalState.source === "figma" ? "block" : "none";
+      updateRefSaveEnabled();
+    });
+  });
+
+  $("#refPptxInput").addEventListener("change", async () => {
+    const file = $("#refPptxInput").files[0];
+    if (!file) return;
+    try {
+      refModalState.parsedPptx = await parsePptx(file);
+      refModalState.parsedPptx.fileName = file.name;
+      const select = $("#refSlideSelect");
+      select.innerHTML = "";
+      refModalState.parsedPptx.slides.forEach((s) => {
+        const preview = truncate(s.shapes.map((sh) => sh.text).filter(Boolean).join(" "), 30) || "(텍스트 없음)";
+        select.appendChild(
+          el("option", { text: `슬라이드 ${s.index}: ${preview}`, attrs: { value: String(s.index) } })
+        );
+      });
+      select.style.display = "block";
+      refModalState.selectedSlideIndex = refModalState.parsedPptx.slides[0]?.index ?? null;
+      updateRefSaveEnabled();
+    } catch (e) {
+      showToast(`PPTX 분석 실패: ${e.message}`, true);
+    }
+  });
+  $("#refSlideSelect").addEventListener("change", (ev) => {
+    refModalState.selectedSlideIndex = parseInt(ev.target.value, 10);
+  });
+
+  $("#refFigmaLoadBtn").addEventListener("click", async () => {
+    const raw = $("#refFigmaUrlInput").value.trim();
+    if (!raw) {
+      showToast("피그마 URL 또는 key를 입력해주세요.", true);
+      return;
+    }
+    const btn = $("#refFigmaLoadBtn");
+    btn.disabled = true;
+    btn.textContent = "불러오는 중...";
+    try {
+      const { fileKey } = parseFigmaKeyAndNode(raw);
+      if (!fileKey) throw new Error("올바른 URL/key가 아닙니다.");
+      const fileData = await fetchFigmaFile(fileKey);
+      refModalState.figmaComponentsMap = fileData.components || {};
+      refModalState.figmaFrames = collectFigmaFrames(fileData.document, { maxFrames: 40 });
+      if (!refModalState.figmaFrames.length) throw new Error("프레임을 찾지 못했습니다.");
+      const select = $("#refFrameSelect");
+      select.innerHTML = "";
+      refModalState.figmaFrames.forEach((f, i) => {
+        select.appendChild(el("option", { text: f.name, attrs: { value: String(i) } }));
+      });
+      select.style.display = "block";
+      refModalState.selectedFrameIndex = 0;
+      updateRefSaveEnabled();
+    } catch (e) {
+      showToast(`피그마 불러오기 실패: ${e.message}`, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "프레임 목록 불러오기";
+    }
+  });
+  $("#refFrameSelect").addEventListener("change", (ev) => {
+    refModalState.selectedFrameIndex = parseInt(ev.target.value, 10);
+  });
+
+  $("#refModalSaveBtn").addEventListener("click", saveReferenceDesign);
+}
+
+function updateRefSaveEnabled() {
+  const ok =
+    refModalState.source === "pptx"
+      ? !!(refModalState.parsedPptx && refModalState.selectedSlideIndex != null)
+      : !!(refModalState.figmaFrames.length && refModalState.selectedFrameIndex != null);
+  $("#refModalSaveBtn").disabled = !ok;
+}
+
+function openReferenceModal() {
+  refModalState = {
+    source: "pptx",
+    parsedPptx: null,
+    selectedSlideIndex: null,
+    figmaFrames: [],
+    selectedFrameIndex: null,
+    figmaComponentsMap: {},
+  };
+  $("#refPptxInput").value = "";
+  $("#refSlideSelect").innerHTML = "";
+  $("#refSlideSelect").style.display = "none";
+  $("#refFigmaUrlInput").value = "";
+  $("#refFrameSelect").innerHTML = "";
+  $("#refFrameSelect").style.display = "none";
+  $("#refCategoryInput").value = "";
+  $("#refTagsInput").value = "";
+  $("#refNotesInput").value = "";
+  $all(".ref-source-btn").forEach((b) => b.classList.toggle("active", b.dataset.source === "pptx"));
+  $("#refPptxSection").style.display = "block";
+  $("#refFigmaSection").style.display = "none";
+  populateCategoryDatalist();
+  updateRefSaveEnabled();
+  $("#referenceModalOverlay").style.display = "flex";
+}
+
+function closeReferenceModal() {
+  $("#referenceModalOverlay").style.display = "none";
+}
+
+function saveReferenceDesign() {
+  const category = $("#refCategoryInput").value.trim() || "미분류";
+  const tags = $("#refTagsInput").value
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const notes = $("#refNotesInput").value.trim();
+
+  let sourceType, sourceRef, elements;
+
+  if (refModalState.source === "pptx") {
+    const slide = refModalState.parsedPptx.slides.find((s) => s.index === refModalState.selectedSlideIndex);
+    if (!slide) {
+      showToast("슬라이드를 선택해주세요.", true);
+      return;
+    }
+    sourceType = "pptx";
+    sourceRef = `${refModalState.parsedPptx.fileName} - 슬라이드 ${slide.index}`;
+    elements = shapesToElements(slide.shapes);
+  } else {
+    const frame = refModalState.figmaFrames[refModalState.selectedFrameIndex];
+    if (!frame) {
+      showToast("프레임을 선택해주세요.", true);
+      return;
+    }
+    const slide = figmaFrameToSlide(frame, 1, refModalState.figmaComponentsMap);
+    sourceType = "figma";
+    sourceRef = `${$("#refFigmaUrlInput").value.trim()} - 프레임 "${frame.name}"`;
+    elements = shapesToElements(slide.shapes);
+  }
+
+  const rule = {
+    id: uid("ref-" + slugify(category)),
+    category,
+    type: "reference_design",
+    source_type: sourceType,
+    source_ref: sourceRef,
+    extracted_layout: { elements },
+    tags,
+    notes,
+    created_by: "user-upload",
+    created_at: new Date().toISOString(),
+  };
+  ruleset.push(rule);
+  saveRuleset();
+  renderRulesetView();
+  closeReferenceModal();
+  showToast("레퍼런스 디자인이 룰셋에 저장되었습니다.");
+}
+
 // ===================== 설정 탭 =====================
+
+function initFigmaSettings() {
+  const input = $("#figmaTokenInput");
+  input.value = getFigmaToken();
+  input.addEventListener("change", () => setFigmaToken(input.value.trim()));
+}
 
 function initSettingsTab() {
   $("#resetRulesetBtn").addEventListener("click", () => {
@@ -1178,8 +1847,11 @@ function init() {
   initTabs();
   initConsultantChat();
   initQaUploads();
+  initQaSourceToggle();
   initRulesetToolbar();
+  initReferenceModal();
   initSettingsTab();
+  initFigmaSettings();
   renderRulesetView();
 }
 

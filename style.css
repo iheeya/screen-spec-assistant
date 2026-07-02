@@ -549,7 +549,115 @@ input, select, textarea, button {
   font-size: 12.5px;
 }
 
+/* ---------- QA source toggle ---------- */
+
+.qa-source-toggle {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.qa-source-btn.active,
+.ref-source-btn.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: white;
+}
+
+#qaCategorySelect {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+/* ---------- Reference design cards ---------- */
+
+.rule-card-ref {
+  border-left: 3px solid #7c3aed;
+}
+
+.tag-ref {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 10px;
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+/* ---------- Modal ---------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 15, 20, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.modal-box {
+  background: white;
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  width: 480px;
+  max-width: 100%;
+  max-height: 88vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.modal-box h3 {
+  margin: 0 0 14px;
+  font-size: 15px;
+}
+
+.modal-field {
+  margin-bottom: 12px;
+}
+
+.modal-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--color-text-muted);
+}
+
+.modal-field input[type="text"],
+.modal-field input[type="file"],
+.modal-field select,
+.modal-field textarea {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.ref-source-toggle {
+  display: flex;
+  gap: 6px;
+}
+
 /* ---------- Settings ---------- */
+
+.settings-row input[type="password"],
+.settings-row input[type="text"] {
+  padding: 7px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
 
 .settings-section {
   background: var(--color-panel);

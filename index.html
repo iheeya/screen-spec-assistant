@@ -52,17 +52,39 @@
 
       <!-- QA 리뷰어 -->
       <div class="tab-panel active" id="tab-qa">
-        <div class="upload-box">
-          <label for="pptxInput">1. 화면설계서 PPTX 업로드 (필수)</label>
-          <input type="file" id="pptxInput" accept=".pptx" />
-          <div class="hint" id="pptxFileName"></div>
+        <div class="qa-source-toggle">
+          <button type="button" class="btn btn-sm qa-source-btn active" data-source="pptx">PPTX 업로드</button>
+          <button type="button" class="btn btn-sm qa-source-btn" data-source="figma">피그마 URL로 검토</button>
+        </div>
+
+        <div id="pptxUploadBox">
+          <div class="upload-box">
+            <label for="pptxInput">1. 화면설계서 PPTX 업로드 (필수)</label>
+            <input type="file" id="pptxInput" accept=".pptx" />
+            <div class="hint" id="pptxFileName"></div>
+          </div>
+
+          <div class="upload-box">
+            <label for="imageInput">2. 슬라이드 PNG 이미지 업로드 (선택 — Vision 분석용)</label>
+            <input type="file" id="imageInput" accept="image/png,image/jpeg" multiple />
+            <div class="hint">파워포인트에서 슬라이드를 PNG로 내보내 업로드하면 여백/정렬감/시각적 위계를 추가로 분석합니다. 각 이미지가 몇 번 슬라이드인지 지정해주세요.</div>
+            <div class="file-chip-list" id="imageFileList"></div>
+          </div>
+        </div>
+
+        <div id="figmaUploadBox" style="display:none;">
+          <div class="upload-box">
+            <label for="figmaUrlInput">1. 피그마 파일 URL 또는 파일 key</label>
+            <input type="text" id="figmaUrlInput" placeholder="https://www.figma.com/design/XXXX/... 또는 파일 key" />
+            <label for="figmaFrameFilterInput" style="margin-top:12px;">2. 프레임 필터 (프레임 이름 또는 node-id, 선택)</label>
+            <input type="text" id="figmaFrameFilterInput" placeholder="예: FAQ 화면 (비워두면 각 페이지의 최상위 프레임을 최대 20개까지 검토)" />
+            <div class="hint">Figma Personal Access Token은 설정 탭에서 입력해주세요. 브라우저에서 Figma API로 직접 요청하며, Figma가 CORS를 허용하므로 별도 서버가 필요 없습니다.</div>
+          </div>
         </div>
 
         <div class="upload-box">
-          <label for="imageInput">2. 슬라이드 PNG 이미지 업로드 (선택 — Vision 분석용)</label>
-          <input type="file" id="imageInput" accept="image/png,image/jpeg" multiple />
-          <div class="hint">파워포인트에서 슬라이드를 PNG로 내보내 업로드하면 여백/정렬감/시각적 위계를 추가로 분석합니다. 각 이미지가 몇 번 슬라이드인지 지정해주세요.</div>
-          <div class="file-chip-list" id="imageFileList"></div>
+          <label for="qaCategorySelect">참고 카테고리 (선택 — 룰셋에 저장된 레퍼런스 디자인과 자동 비교)</label>
+          <select id="qaCategorySelect"><option value="">비교 안 함</option></select>
         </div>
 
         <button class="btn btn-primary" id="runQaBtn" disabled>QA 리뷰 실행</button>
@@ -74,8 +96,9 @@
       <!-- 룰셋 뷰어 -->
       <div class="tab-panel" id="tab-ruleset">
         <div class="ruleset-toolbar">
-          <input type="text" id="ruleSearchInput" placeholder="카테고리/조건/추천 검색..." />
-          <button class="btn btn-sm" id="addRuleBtn">+ 새 규칙</button>
+          <input type="text" id="ruleSearchInput" placeholder="카테고리/조건/추천/태그 검색..." />
+          <button class="btn btn-sm" id="addTextRuleBtn">+ 텍스트 규칙</button>
+          <button class="btn btn-sm" id="addReferenceBtn">+ 레퍼런스 디자인</button>
           <button class="btn btn-sm" id="exportRulesetBtn">JSON 내보내기</button>
           <label class="btn btn-sm" style="margin:0;">
             JSON 가져오기
@@ -94,6 +117,20 @@
               API 키는 상단 입력창에서 설정하며, 이 브라우저의 localStorage에만 저장됩니다. 서버로 전송되지 않고
               Anthropic API에 브라우저에서 직접 요청합니다 (개인용 도구이므로 이 정도 보안 수준으로 충분합니다).
             </div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>Figma 연동</h3>
+          <div class="settings-row">
+            <div class="row-desc">
+              Figma 계정 설정(Settings) &gt; Security 탭에서 Personal Access Token을 발급받아 입력하세요.
+              이 토큰은 브라우저 localStorage에만 저장되며, 룰셋의 "레퍼런스 디자인 추가"와 QA 리뷰어의 "피그마 URL로 검토"에서 사용됩니다.
+            </div>
+          </div>
+          <div class="settings-row">
+            <input type="password" id="figmaTokenInput" placeholder="Figma Personal Access Token (figd_...)" autocomplete="off" style="flex:1;min-width:260px;" />
+            <a class="help-link" href="https://www.figma.com/developers/api#access-tokens" target="_blank" rel="noopener">발급 방법 ↗</a>
           </div>
         </div>
 
@@ -124,6 +161,51 @@
 </div>
 
 <div class="toast-container" id="toastContainer"></div>
+
+<div class="modal-overlay" id="referenceModalOverlay" style="display:none;">
+  <div class="modal-box">
+    <h3>레퍼런스 디자인 추가</h3>
+    <div class="modal-field">
+      <label>소스 타입</label>
+      <div class="ref-source-toggle">
+        <button type="button" class="btn btn-sm ref-source-btn active" data-source="pptx">PPTX 슬라이드</button>
+        <button type="button" class="btn btn-sm ref-source-btn" data-source="figma">피그마 프레임</button>
+      </div>
+    </div>
+
+    <div class="modal-field" id="refPptxSection">
+      <label for="refPptxInput">PPTX 파일 업로드 후 기준으로 삼을 슬라이드 선택</label>
+      <input type="file" id="refPptxInput" accept=".pptx" />
+      <select id="refSlideSelect" style="margin-top:8px;display:none;"></select>
+    </div>
+
+    <div class="modal-field" id="refFigmaSection" style="display:none;">
+      <label for="refFigmaUrlInput">피그마 파일 URL 또는 key</label>
+      <input type="text" id="refFigmaUrlInput" placeholder="https://www.figma.com/design/XXXX/..." />
+      <button type="button" class="btn btn-sm" id="refFigmaLoadBtn" style="margin-top:6px;">프레임 목록 불러오기</button>
+      <select id="refFrameSelect" style="margin-top:8px;display:none;"></select>
+    </div>
+
+    <div class="modal-field">
+      <label for="refCategoryInput">카테고리</label>
+      <input type="text" id="refCategoryInput" list="categoryDatalist" placeholder="예: FAQ/도움말" />
+      <datalist id="categoryDatalist"></datalist>
+    </div>
+    <div class="modal-field">
+      <label for="refTagsInput">태그 (쉼표로 구분)</label>
+      <input type="text" id="refTagsInput" placeholder="예: FAQ, 아코디언, 모바일" />
+    </div>
+    <div class="modal-field">
+      <label for="refNotesInput">메모</label>
+      <textarea id="refNotesInput" rows="2" placeholder="예: 팀장 승인 완료된 기준 화면"></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn" id="refModalCancelBtn">취소</button>
+      <button type="button" class="btn btn-primary" id="refModalSaveBtn" disabled>저장</button>
+    </div>
+  </div>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="ruleset-seed.js"></script>
